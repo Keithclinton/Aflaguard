@@ -40,11 +40,12 @@ Workflow:
 3. score_aflatoxin_risk for EVERY lot from get_lots (call it for all of them at once).
 4. draft_test_list with all the lots.
 5. draft_household_advisory for every lot scored high.
-6. request_officer_approval for the test list and for each advisory (one at a time).
-7. For each APPROVED advisory: send_advisory, then schedule_followup about 7 days after today's date for a re-check.
-   For rejected or undecided drafts: do nothing further.
-8. Finish with a short report for the officer: ranked lots, data problems found, what was approved, sent
-   and scheduled, and anything you could not do. Cite record IDs."""
+6. request_officer_approval for the test list and every advisory (you may request them all at once; the
+   officer sees them one at a time).
+7. For each APPROVED advisory: send_advisory and schedule_followup about 7 days after today's date for a
+   re-check (both in the same turn). For rejected or undecided drafts: do nothing further.
+8. Finish with a report for the officer (under 300 words): ranked lots, data problems found, what was
+   approved, sent and scheduled, and anything you could not do. Cite record IDs."""
 
 
 class AgentState(TypedDict):
@@ -106,7 +107,8 @@ def find_gaps(messages: list[BaseMessage]) -> list[str]:
     listed = {lot["lot_id"] for n, _, o in ok if n == "get_lots" for lot in o.get("lots", [])}
     scored = {o["lot_id"]: o for n, _, o in ok if n == "score_aflatoxin_risk"}
     drafts = {o["draft_id"]: o for n, _, o in ok if n.startswith("draft_")}
-    decided = {o["draft_id"]: o for n, _, o in ok if n == "request_officer_approval"}
+    # a draft counts as put to the officer even if they skipped it or could not be reached
+    decided = {o["draft_id"]: o for n, _, o, _ in results if n == "request_officer_approval" and o and "draft_id" in o}
     sent = {a.get("draft_id") for n, a, o in ok if n == "send_advisory" and o.get("sent")}
     advised = {o["lot_id"] for o in drafts.values() if o["kind"] == "advisory"}
 
