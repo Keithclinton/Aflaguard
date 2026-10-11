@@ -66,8 +66,11 @@ def get_lots(centre_id: str, since_date: str, until_date: str | None = None) -> 
                    "Likely one delivery entered twice; confirm before testing both."}
         for k, ids in groups.items() if len(ids) > 1
     ]
+    for r in rows:  # same for every row; given once at the top
+        del r["centre_id"], r["crop"]
     return {
         "centre_id": centre_id,
+        "crop": "maize",
         "since_date": since.isoformat(),
         "until_date": until_date,
         "lot_count": len(rows),

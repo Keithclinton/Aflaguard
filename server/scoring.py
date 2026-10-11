@@ -94,6 +94,10 @@ def score_lot(lot_id: str) -> dict:
     if insufficient and level == "low":
         level = "medium"
 
+    # issues already explained by a reason above are not repeated
+    explained = {"conflicting_readings", "no_valid_store_reading", "unknown_drying_method", "unknown_storage_bag"}
+    issues = [i for i in moisture["data_issues"] + practices["data_issues"] + rain["data_issues"]
+              if i["issue"] not in explained]
     sources = sorted({s for r in reasons for s in r["sources"]} | {f"lots:{lot_id}"})
     return {
         "lot_id": lot_id,
@@ -102,11 +106,9 @@ def score_lot(lot_id: str) -> dict:
         "risk_level": level,
         "score": score,
         "insufficient_data": insufficient,
-        "recommendation": "test" if level != "low" else "routine sampling only",
         "reasons": reasons,
-        "data_issues": moisture["data_issues"] + practices["data_issues"] + rain["data_issues"],
+        "data_issues": issues,
         "sources": sources,
-        "rules": f"score>={HIGH_AT} high, {MEDIUM_AT}-{HIGH_AT - 1} medium, else low; see ARCHITECTURE.md",
     }
 
 

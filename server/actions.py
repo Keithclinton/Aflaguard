@@ -79,7 +79,11 @@ def draft_test_list(centre_id: str, lot_ids: list[str]) -> dict:
     content = {"centre_id": centre_id, "entries": entries,
                "method": "ranked by score_aflatoxin_risk rules (level, then score)"}
     draft_id = state.create_draft("test_list", content, sources, centre_id=centre_id)
-    return {"draft_id": draft_id, "status": "draft", "kind": "test_list", **content, "sources": sources,
+    # The full draft (reasons, per-lot sources) is stored and shown to the officer; the caller gets a summary.
+    summary = [{k: e[k] for k in ("rank", "lot_id", "household_id", "risk_level", "score", "notes")}
+               for e in entries]
+    return {"draft_id": draft_id, "status": "draft", "kind": "test_list", "centre_id": centre_id,
+            "entries": summary, "sources": sources,
             "next_step": "Call request_officer_approval with this draft_id. Nothing is final until approved."}
 
 
@@ -103,7 +107,8 @@ def draft_household_advisory(household_id: str, lot_id: str) -> dict:
                "score": s["score"], "sms_text": sms, "advice": lines}
     draft_id = state.create_draft("advisory", content, sources, household_id=household_id, lot_id=lot_id,
                                   centre_id=lot["centre_id"])
-    return {"draft_id": draft_id, "status": "draft", "kind": "advisory", **content, "sources": sources,
+    return {"draft_id": draft_id, "status": "draft", "kind": "advisory", "household_id": household_id,
+            "lot_id": lot_id, "risk_level": s["risk_level"], "sms_text": sms, "sources": sources,
             "next_step": "Call request_officer_approval with this draft_id. It cannot be sent until approved."}
 
 
