@@ -11,9 +11,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # allow `python server/aflatoxin_mcp.py`
 
-from mcp.server.fastmcp import FastMCP  # noqa: E402
+from mcp.server.fastmcp import Context, FastMCP  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
 
-from server import records, scoring  # noqa: E402
+from server import actions, records, scoring  # noqa: E402
 from server.tool_log import logged  # noqa: E402
 
 mcp = FastMCP("aflaguard")
@@ -21,17 +22,18 @@ mcp = FastMCP("aflaguard")
 
 @mcp.tool()
 @logged
-def get_lots(centre_id: str, since_date: str) -> dict:
-    """List maize lots received at an aggregation centre on or after since_date.
+def get_lots(centre_id: str, since_date: str, until_date: str | None = None) -> dict:
+    """List maize lots received at an aggregation centre between since_date and until_date.
 
     Args:
         centre_id: Aggregation centre ID, e.g. "AC-MAK-01".
         since_date: ISO date (YYYY-MM-DD); lots collected on or after this date are returned.
+        until_date: Optional ISO date; lots collected after this date are left out.
 
     Returns lots (lot_id, household_id, county, bags, weight_kg, harvest/drying/collection/store dates),
     `data_issues` (e.g. possible duplicate lots) and `sources` (record IDs).
     """
-    return records.get_lots(centre_id, since_date)
+    return records.get_lots(centre_id, since_date, until_date)
 
 
 @mcp.tool()
@@ -86,6 +88,78 @@ def score_aflatoxin_risk(lot_id: str) -> dict:
     'insufficient data - test anyway'. Report the score as given; do not change it.
     """
     return scoring.score_lot(lot_id)
+
+
+# ---------- action tools ----------
+
+@mcp.tool()
+@logged
+def draft_test_list(centre_id: str, lot_ids: list[str]) -> dict:
+    """Create a DRAFT ranked list of lots to test for aflatoxin first. Nothing is final until approved.
+
+    Ranking is done by the scoring rules, not by you: high before medium before low, then by score.
+    Each entry carries its reasons, notes (insufficient data, possible duplicates) and sources.
+    Lots must all belong to centre_id. Returns a draft_id with status 'draft'.
+    """
+    return actions.draft_test_list(centre_id, lot_ids)
+
+
+@mcp.tool()
+@logged
+def draft_household_advisory(household_id: str, lot_id: str) -> dict:
+    """Create a DRAFT SMS advisory for one household about one of its lots (re-dry, hermetic bags, hold sale...).
+
+    Text is built from the lot's scored reasons, each line with its sources. Returns a draft_id
+    with status 'draft'. It cannot be sent until a named officer approves it.
+    """
+    return actions.draft_household_advisory(household_id, lot_id)
+
+
+class OfficerDecision(BaseModel):
+    officer_name: str = Field(description="Full name of the approving officer")
+    approve: bool = Field(description="true to approve, false to reject")
+    note: str = Field(default="", description="Optional note")
+
+
+@mcp.tool()
+@logged
+async def request_officer_approval(draft_id: str, ctx: Context) -> dict:
+    """Pause and ask the extension officer to approve or reject a draft (test list or advisory).
+
+    The officer sees the full draft with its sources and answers with their name. You cannot
+    approve on their behalf. Returns the decision. If there is no decision, nothing may be sent.
+    """
+    draft = actions.check_approvable(draft_id)
+    try:
+        result = await ctx.elicit(message=actions.render_for_officer(draft), schema=OfficerDecision)
+    except Exception as e:  # client cannot ask a human: fail closed
+        return {"draft_id": draft_id, "status": draft["status"], "decision": None,
+                "error": f"Could not reach an officer ({type(e).__name__}). Draft stays unapproved."}
+    if result.action != "accept":
+        return {"draft_id": draft_id, "status": draft["status"], "decision": None,
+                "error": f"Officer {result.action}ed the prompt. No decision recorded; draft stays unapproved."}
+    d = result.data
+    return actions.record_officer_decision(draft_id, d.officer_name, d.approve, d.note)
+
+
+@mcp.tool()
+@logged
+def send_advisory(draft_id: str) -> dict:
+    """Send an approved advisory to the household by SMS (MOCKED: written to an outbox, nothing really sent).
+
+    Refuses unless a named officer approved this exact draft via request_officer_approval.
+    """
+    return actions.send_advisory(draft_id)
+
+
+@mcp.tool()
+@logged
+def schedule_followup(household_id: str, lot_id: str, visit_date: str, reason: str) -> dict:
+    """Record a follow-up visit to a household about a lot (e.g. check re-drying, collect test sample).
+
+    Only allowed for a lot whose advisory a named officer has approved. visit_date is ISO (YYYY-MM-DD).
+    """
+    return actions.schedule_followup(household_id, lot_id, visit_date, reason)
 
 
 if __name__ == "__main__":

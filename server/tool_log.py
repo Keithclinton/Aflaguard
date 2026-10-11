@@ -8,6 +8,7 @@ so calls are logged whichever client makes them.
 from __future__ import annotations
 
 import functools
+import inspect
 import json
 import os
 import time
@@ -30,31 +31,57 @@ def write_entry(entry: dict) -> None:
         f.write(json.dumps(entry, default=str, ensure_ascii=False) + "\n")
 
 
+def _start(fn, kwargs: dict) -> dict:
+    return {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "run_id": os.getenv("AFLAGUARD_RUN_ID", "manual"),
+        "server": "aflaguard",
+        "tool": fn.__name__,
+        "inputs": {k: v for k, v in kwargs.items() if k != "ctx"},  # the MCP context is not an input
+        "t0": time.perf_counter(),
+    }
+
+
+def _finish(entry: dict, out=None, error: Exception | None = None) -> None:
+    entry["ms"] = round((time.perf_counter() - entry.pop("t0")) * 1000)
+    if error is not None:
+        entry["error"] = f"{type(error).__name__}: {error}"
+    else:
+        if isinstance(out, dict) and out.get("approved_by"):
+            entry["approved_by"] = out["approved_by"]
+        entry["output"] = out
+    write_entry(entry)
+
+
 def logged(fn):
-    """Wrap a tool so each call is logged. Bad-input errors come back as {"error": ...}."""
+    """Wrap a tool (sync or async) so each call is logged. Bad-input errors come back as {"error": ...}."""
+
+    if inspect.iscoroutinefunction(fn):
+        @functools.wraps(fn)
+        async def async_wrapper(**kwargs):
+            entry = _start(fn, kwargs)
+            try:
+                out = await fn(**kwargs)
+            except RecordError as e:
+                out = {"error": str(e)}
+            except Exception as e:
+                _finish(entry, error=e)
+                raise
+            _finish(entry, out)
+            return out
+        return async_wrapper
 
     @functools.wraps(fn)
     def wrapper(**kwargs):
-        entry = {
-            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "run_id": os.getenv("AFLAGUARD_RUN_ID", "manual"),
-            "tool": fn.__name__,
-            "inputs": kwargs,
-        }
-        start = time.perf_counter()
+        entry = _start(fn, kwargs)
         try:
             out = fn(**kwargs)
         except RecordError as e:
             out = {"error": str(e)}
         except Exception as e:
-            entry.update(error=f"{type(e).__name__}: {e}", ms=round((time.perf_counter() - start) * 1000))
-            write_entry(entry)
+            _finish(entry, error=e)
             raise
-        entry["ms"] = round((time.perf_counter() - start) * 1000)
-        if isinstance(out, dict) and out.get("approved_by"):
-            entry["approved_by"] = out["approved_by"]
-        entry["output"] = out
-        write_entry(entry)
+        _finish(entry, out)
         return out
 
     return wrapper

@@ -44,15 +44,17 @@ def _parse_date(value: str, field: str) -> date:
 
 # ---------- lots ----------
 
-def get_lots(centre_id: str, since_date: str) -> dict:
+def get_lots(centre_id: str, since_date: str, until_date: str | None = None) -> dict:
     since = _parse_date(since_date, "since_date")
+    until = _parse_date(until_date, "until_date") if until_date else date.max
     with _connect() as con:
         centres = [r["centre_id"] for r in con.execute("SELECT centre_id FROM centres")]
         if centre_id not in centres:
             raise RecordError(f"Unknown centre_id {centre_id!r}. Known centres: {centres}")
         rows = [dict(r) for r in con.execute(
-            "SELECT * FROM lots WHERE centre_id = ? AND collection_date >= ? ORDER BY collection_date, lot_id",
-            (centre_id, since.isoformat()))]
+            "SELECT * FROM lots WHERE centre_id = ? AND collection_date BETWEEN ? AND ? "
+            "ORDER BY collection_date, lot_id",
+            (centre_id, since.isoformat(), until.isoformat()))]
 
     # same household, same weight, same day: almost certainly one delivery keyed twice
     groups: dict[tuple, list[str]] = defaultdict(list)
@@ -67,6 +69,7 @@ def get_lots(centre_id: str, since_date: str) -> dict:
     return {
         "centre_id": centre_id,
         "since_date": since.isoformat(),
+        "until_date": until_date,
         "lot_count": len(rows),
         "lots": rows,
         "data_issues": issues,
