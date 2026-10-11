@@ -18,3 +18,6 @@ CLAUDE.md
 .idea/
 Thumbs.db
 .DS_Store
+
+# Runtime state (drafts, approvals, mock outbox)
+data/runtime/
