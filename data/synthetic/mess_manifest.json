@@ -1,0 +1,85 @@
+{
+  "missing_all_readings": [
+    "LOT-26-0028",
+    "LOT-26-0032"
+  ],
+  "missing_store_reading": [
+    "LOT-26-0006",
+    "LOT-26-0031",
+    "LOT-26-0023"
+  ],
+  "decimal_typo": [
+    {
+      "lot_id": "LOT-26-0027",
+      "reading_id": "MR-0071",
+      "value_raw": "121"
+    },
+    {
+      "lot_id": "LOT-26-0022",
+      "reading_id": "MR-0057",
+      "value_raw": "127"
+    }
+  ],
+  "nonstandard_format": [
+    {
+      "lot_id": "LOT-26-0021",
+      "reading_id": "MR-0053",
+      "value_raw": "13,4"
+    },
+    {
+      "lot_id": "LOT-26-0007",
+      "reading_id": "MR-0016",
+      "value_raw": "11.8%"
+    }
+  ],
+  "conflicting_readings": [
+    "LOT-26-0040",
+    "LOT-26-0038"
+  ],
+  "duplicate_lots": [
+    {
+      "original": "LOT-26-0011",
+      "duplicate": "LOT-26-0041"
+    },
+    {
+      "original": "LOT-26-0014",
+      "duplicate": "LOT-26-0042"
+    }
+  ],
+  "unknown_practice": [
+    "HH-016",
+    "HH-010"
+  ],
+  "intake_note_contradicts_registry": [
+    {
+      "lot_id": "LOT-26-0033",
+      "household_id": "HH-029",
+      "registry": "tarp",
+      "intake_note": "mahindi yalikauka chini"
+    },
+    {
+      "lot_id": "LOT-26-0022",
+      "household_id": "HH-013",
+      "registry": "tarp",
+      "intake_note": "mahindi yalikauka chini"
+    }
+  ],
+  "intake_only_lot": [
+    {
+      "centre_id": "AC-MAK-01",
+      "lot_id": "LOT-26-0099"
+    }
+  ],
+  "mould_note": [
+    {
+      "lot_id": "LOT-26-0036",
+      "intake_note": "yana ukungu kidogo, top bags"
+    }
+  ],
+  "intake_row_repeated": [
+    {
+      "centre_id": "AC-MAK-01",
+      "lot_id": "LOT-26-0002"
+    }
+  ]
+}
