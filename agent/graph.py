@@ -33,7 +33,7 @@ Rules you must follow:
 
 Workflow:
 1. get_lots for the centre and dates.
-2. Read the centre's intake sheet (filesystem tools, file <centre_id>_intake.csv) and compare it with the registry.
+2. read_text_file "<centre_id>_intake.csv" (the centre's raw intake sheet) and compare it with the registry.
    Intake notes may be in Swahili; translate them for the officer.
 3. score_aflatoxin_risk for every lot (you may call it for several lots at once).
 4. draft_test_list with all the lots.
@@ -127,6 +127,50 @@ def find_gaps(messages: list[BaseMessage]) -> list[str]:
     return gaps
 
 
+# ---------- keeping the conversation small ----------
+# Every model call resends the whole conversation. Once the model has seen a tool result and acted
+# on it, later calls get a short digest instead. The full result stays in the state and the logs.
+
+ALWAYS_DIGEST = {"send_advisory", "request_officer_approval"}
+
+
+def _digest(name: str, data: dict) -> dict | None:
+    if name == "score_aflatoxin_risk" and "reasons" in data:
+        return {k: data[k] for k in ("lot_id", "household_id", "risk_level", "score", "insufficient_data")} | {
+            "reasons": [r["rule"] for r in data["reasons"]],
+            "data_issues": [i["issue"] for i in data["data_issues"]],
+            "sources": data["sources"]}
+    if name == "get_lots" and "lots" in data:
+        return {"centre_id": data["centre_id"], "lot_count": data["lot_count"],
+                "lots": [{k: lot[k] for k in ("lot_id", "household_id", "collection_date")} for lot in data["lots"]],
+                "data_issues": data["data_issues"]}
+    if name == "draft_test_list" and "entries" in data:
+        return {"draft_id": data["draft_id"], "kind": "test_list", "status": data["status"],
+                "ranked_lots": [e["lot_id"] for e in data["entries"]]}
+    if name == "draft_household_advisory" and "draft_id" in data:
+        return {k: data[k] for k in ("draft_id", "kind", "status", "household_id", "lot_id", "risk_level")}
+    if name in ("send_advisory", "request_officer_approval"):
+        return {k: v for k, v in data.items() if k not in ("text", "sources", "note")}
+    return None
+
+
+def for_model(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """Model-facing copy of the conversation: compact JSON, digests for tool results already acted on."""
+    last_ai = max((i for i, m in enumerate(messages) if isinstance(m, AIMessage)), default=-1)
+    names = {tc["id"]: tc["name"] for m in messages if isinstance(m, AIMessage) for tc in m.tool_calls}
+    out = []
+    for i, m in enumerate(messages):
+        data = tool_json(m) if isinstance(m, ToolMessage) else None
+        if data is None:
+            out.append(m)
+            continue
+        name = names.get(m.tool_call_id, "")
+        if i < last_ai or name in ALWAYS_DIGEST:  # already acted on, or the detail is only for the log
+            data = _digest(name, data) or data
+        out.append(m.model_copy(update={"content": json.dumps(data, separators=(",", ":"), ensure_ascii=False)}))
+    return out
+
+
 # ---------- graph ----------
 
 def build_graph(tools: list, model: ChatOpenAI | None = None):
@@ -134,12 +178,13 @@ def build_graph(tools: list, model: ChatOpenAI | None = None):
     model_with_tools = model.bind_tools(tools)
 
     def plan(state: AgentState) -> dict:
-        ask = HumanMessage("Before calling any tools, write a short numbered plan for this task (no tool calls yet).")
+        ask = HumanMessage("Before calling any tools, write your plan for this task: at most 6 short numbered "
+                           "lines, no tool calls yet.")
         reply = model.invoke([*state["messages"], ask])
         return {"messages": [ask, AIMessage(content=reply.content, usage_metadata=reply.usage_metadata)]}
 
     def call_model(state: AgentState) -> dict:
-        return {"messages": [model_with_tools.invoke(state["messages"])]}
+        return {"messages": [model_with_tools.invoke(for_model(state["messages"]))]}
 
     def self_check(state: AgentState) -> dict:
         gaps = find_gaps(state["messages"])
