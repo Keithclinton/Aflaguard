@@ -1,0 +1,25 @@
+[project]
+name = "aflaguard"
+version = "0.1.0"
+description = "Aflatoxin risk flagger: an agent that helps extension officers decide which maize lots to test first."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.9",
+    "langgraph>=0.4",
+    "langchain-mcp-adapters>=0.1",
+    "langchain-openai>=0.3",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent", "server"]
