@@ -11,14 +11,20 @@ traceability*.
 ## Run it
 
 Needs [uv](https://docs.astral.sh/uv/) and Node.js 18+ (for the borrowed Filesystem MCP server).
+Runs free: get a free API key at [console.groq.com](https://console.groq.com/keys) (no card needed).
 
 ```bash
-cp .env.example .env        # then put your API key in .env
+cp .env.example .env        # then paste your Groq key into LLM_API_KEY in .env
 uv run agent/run.py --centre AC-MAK-01 --since 2026-02-16 --until 2026-02-22
 ```
 
 Centres: `AC-MAK-01` (Makueni), `AC-KIT-01` (Kitui), `AC-MKS-01` (Machakos). The agent stops at each
 draft and asks you, as the officer, to approve or reject it by name.
+
+**Free-tier limits.** Groq's free tier allows about 7,000 input tokens per minute and 200,000 tokens per
+day per model, so a run takes a few minutes (most of it waiting on the per-minute limit) and about three
+full runs fit in a day. Keep the date range to about a week (≤ 8 lots); a wider range can exceed the
+per-minute limit, and the agent will say so.
 
 **Model:** any open-weights model behind an OpenAI-compatible endpoint, chosen in `.env` only:
 
