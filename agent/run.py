@@ -36,8 +36,14 @@ from server.tool_log import write_entry  # noqa: E402
 
 INTAKE_DIR = ROOT / "data" / "intake"
 FILESYSTEM_SERVER = "@modelcontextprotocol/server-filesystem@2026.8.31"  # pinned
-FILESYSTEM_READ_ONLY = {"read_text_file", "read_multiple_files", "list_directory",
-                        "list_allowed_directories", "search_files", "get_file_info"}
+# Tools the model is given. Every tool description is resent on every model call, so the default
+# "core" set is only what the workflow needs; score_aflatoxin_risk already gathers moisture, practices
+# and rainfall. AGENT_TOOLSET=full adds the remaining read tools (for providers with bigger limits).
+CORE_TOOLS = {"get_lots", "score_aflatoxin_risk", "draft_test_list", "draft_household_advisory",
+              "request_officer_approval", "send_advisory", "schedule_followup",
+              "read_text_file", "list_directory"}
+FULL_EXTRA = {"get_moisture_readings", "get_drying_rainfall", "get_household_practices", "search_files"}
+# Never given to the model: the borrowed server's write tools (write_file, edit_file, move_file...).
 
 
 def connections() -> dict:
@@ -120,6 +126,7 @@ async def run(centre: str, since: str, until: str | None, elicitation=cli_office
     client = MultiServerMCPClient(connections(), callbacks=Callbacks(on_elicitation=elicitation))
     task = (f"Centre {centre}. Lots collected from {since}" + (f" to {until}" if until else "") +
             f". Today's date is {datetime.now():%Y-%m-%d}. Decide which lots to test first and draft advice.")
+    allowed = CORE_TOOLS | (FULL_EXTRA if os.getenv("AGENT_TOOLSET") == "full" else set())
     t0 = time.perf_counter()
     async with AsyncExitStack() as stack:
         tools = []
@@ -127,9 +134,7 @@ async def run(centre: str, since: str, until: str | None, elicitation=cli_office
             session = await stack.enter_async_context(client.session(name))
             loaded = await load_mcp_tools(session, callbacks=client.callbacks, server_name=name,
                                           tool_interceptors=[log_and_retry])
-            if name == "filesystem":
-                loaded = [t for t in loaded if t.name in FILESYSTEM_READ_ONLY]
-            tools += loaded
+            tools += [t for t in loaded if t.name in allowed]
         graph = build_graph(tools, model)
         state = initial_state(task)
         messages = list(state["messages"])

@@ -58,7 +58,8 @@ def make_model() -> ChatOpenAI:
         api_key=os.environ["LLM_API_KEY"],
         model=os.environ["LLM_MODEL"],
         temperature=float(os.getenv("LLM_TEMPERATURE", "0")),
-        max_retries=int(os.getenv("LLM_MAX_RETRIES", "4")),
+        max_retries=int(os.getenv("LLM_MAX_RETRIES", "8")),  # 429s wait for the rate-limit window
+        max_tokens=int(os.getenv("LLM_MAX_TOKENS", "900")),  # free tiers cap output tokens per minute
         extra_body=extra or None,
     )
 
