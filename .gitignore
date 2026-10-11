@@ -10,9 +10,6 @@ __pycache__/
 # Run logs (a sample run is committed under logs/sample/)
 logs/*.jsonl
 
-# Local agent notes
-CLAUDE.md
-
 # Editor / OS
 .vscode/
 .idea/
