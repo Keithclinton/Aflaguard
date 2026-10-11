@@ -16,7 +16,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
-MAX_SELF_CHECKS = 2
+MAX_SELF_CHECKS = 3
 
 SYSTEM_PROMPT = """You are Aflaguard, an assistant to a county agricultural extension officer in Eastern Kenya.
 Your job: decide which maize lots at an aggregation centre to test for aflatoxin first, and draft advice
@@ -33,9 +33,11 @@ Rules you must follow:
 
 Workflow:
 1. get_lots for the centre and dates.
-2. read_text_file "<centre_id>_intake.csv" (the centre's raw intake sheet) and compare it with the registry.
-   Intake notes may be in Swahili; translate them for the officer.
-3. score_aflatoxin_risk for every lot (you may call it for several lots at once).
+2. read_text_file "<centre_id>_intake.csv" (the centre's raw intake sheet, all dates, mixed date formats).
+   Compare only rows dated inside the requested window with the lots from get_lots. A lot ID on the sheet
+   that is outside the window is not a discrepancy. Report repeated rows, lots on the sheet but not in
+   get_lots (inside the window), and notes that disagree with the registry. Translate Swahili notes.
+3. score_aflatoxin_risk for EVERY lot from get_lots (call it for all of them at once).
 4. draft_test_list with all the lots.
 5. draft_household_advisory for every lot scored high.
 6. request_officer_approval for the test list and for each advisory (one at a time).
@@ -115,8 +117,12 @@ def find_gaps(messages: list[BaseMessage]) -> list[str]:
         gaps.append("The centre's intake sheet in the intake folder has not been read and compared with the registry.")
     if missing := sorted(listed - scored.keys()):
         gaps.append(f"These lots are not scored yet: {missing}.")
-    if listed and not any(o["kind"] == "test_list" for o in drafts.values()):
+    on_lists = {lot for o in drafts.values() if o["kind"] == "test_list"
+                for lot in o.get("ranked_lots") or [e["lot_id"] for e in o.get("entries", [])]}
+    if listed and not on_lists:
         gaps.append("No test list has been drafted (draft_test_list).")
+    elif missing := sorted(listed - on_lists):
+        gaps.append(f"These lots are on no test list: {missing}. Draft a new test list with ALL the lots.")
     if missing := sorted(l for l, s in scored.items() if s["risk_level"] == "high" and l not in advised):
         gaps.append(f"High-risk lots without a household advisory draft: {missing}.")
     if missing := sorted(set(drafts) - set(decided)):
