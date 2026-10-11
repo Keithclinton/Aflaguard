@@ -21,13 +21,15 @@ ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = Path(os.getenv("AFLAGUARD_LOG_DIR", ROOT / "logs"))
 
 
-def log_path() -> Path:
-    return LOG_DIR / f"tool_calls_{datetime.now(timezone.utc):%Y-%m-%d}.jsonl"
+def log_path(writer: str = "tool_calls") -> Path:
+    return LOG_DIR / f"{writer}_{datetime.now(timezone.utc):%Y-%m-%d}.jsonl"
 
 
-def write_entry(entry: dict) -> None:
+def write_entry(entry: dict, writer: str = "tool_calls") -> None:
+    """Append one line. Each process writes its own file (server: tool_calls, agent: client_calls)
+    because concurrent appends from two processes can interleave on Windows."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    with log_path().open("a", encoding="utf-8") as f:
+    with log_path(writer).open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, default=str, ensure_ascii=False) + "\n")
 
 

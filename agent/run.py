@@ -32,7 +32,7 @@ from langchain_mcp_adapters.tools import load_mcp_tools  # noqa: E402
 
 from agent.approval import cli_officer  # noqa: E402
 from agent.graph import build_graph, initial_state  # noqa: E402
-from server.tool_log import write_entry  # noqa: E402
+from server import tool_log  # noqa: E402
 
 INTAKE_DIR = ROOT / "data" / "intake"
 FILESYSTEM_SERVER = "@modelcontextprotocol/server-filesystem@2026.8.31"  # pinned
@@ -41,8 +41,8 @@ FILESYSTEM_SERVER = "@modelcontextprotocol/server-filesystem@2026.8.31"  # pinne
 # and rainfall. AGENT_TOOLSET=full adds the remaining read tools (for providers with bigger limits).
 CORE_TOOLS = {"get_lots", "score_aflatoxin_risk", "draft_test_list", "draft_household_advisory",
               "request_officer_approval", "send_advisory", "schedule_followup",
-              "read_text_file", "list_directory"}
-FULL_EXTRA = {"get_moisture_readings", "get_drying_rainfall", "get_household_practices", "search_files"}
+              "read_text_file"}
+FULL_EXTRA = {"get_moisture_readings", "get_drying_rainfall", "get_household_practices", "list_directory"}
 # Never given to the model: the borrowed server's write tools (write_file, edit_file, move_file...).
 
 
@@ -57,6 +57,10 @@ def connections() -> dict:
         "filesystem": {"transport": "stdio", "command": npx,
                        "args": ["-y", FILESYSTEM_SERVER, str(INTAKE_DIR)], "env": env},
     }
+
+
+def log_client(entry: dict) -> None:
+    tool_log.write_entry(entry, writer="client_calls")
 
 
 async def log_and_retry(request, handler):
@@ -80,14 +84,14 @@ async def log_and_retry(request, handler):
             error = f"{type(e).__name__}: {e}"
         if attempt == 1:
             print(f"   ! {request.name} failed ({error}); retrying once")
-            write_entry({**entry, "retry_after_error": error})
+            log_client({**entry, "retry_after_error": error})
     if request.server_name != "aflaguard" or error:
         entry["ms"] = round((time.perf_counter() - t0) * 1000)
         if error:
             entry["error"] = error
         else:
             entry["output"] = " ".join(getattr(c, "text", "") for c in result.content)[:4000]
-        write_entry(entry)
+        log_client(entry)
     if result is None:
         raise RuntimeError(f"{request.name} failed twice: {error}")
     return result
@@ -128,32 +132,46 @@ async def run(centre: str, since: str, until: str | None, elicitation=cli_office
             f". Today's date is {datetime.now():%Y-%m-%d}. Decide which lots to test first and draft advice.")
     allowed = CORE_TOOLS | (FULL_EXTRA if os.getenv("AGENT_TOOLSET") == "full" else set())
     t0 = time.perf_counter()
-    async with AsyncExitStack() as stack:
-        tools = []
-        for name in ("aflaguard", "filesystem"):
-            session = await stack.enter_async_context(client.session(name))
-            loaded = await load_mcp_tools(session, callbacks=client.callbacks, server_name=name,
-                                          tool_interceptors=[log_and_retry])
-            tools += [t for t in loaded if t.name in allowed]
-        graph = build_graph(tools, model)
-        state = initial_state(task)
-        messages = list(state["messages"])
-        if not quiet:
-            print(f"Run {run_id}\nTask: {task}\nTools: {', '.join(t.name for t in tools)}")
-        async for update in graph.astream(state, {"recursion_limit": 80}, stream_mode="updates"):
+    messages, error = [], None
+    try:
+        async with AsyncExitStack() as stack:
+            tools = []
+            for name in ("aflaguard", "filesystem"):
+                session = await stack.enter_async_context(client.session(name))
+                loaded = await load_mcp_tools(session, callbacks=client.callbacks, server_name=name,
+                                              tool_interceptors=[log_and_retry])
+                tools += [t for t in loaded if t.name in allowed]
+            graph = build_graph(tools, model)
+            state = initial_state(task)
+            messages = list(state["messages"])
             if not quiet:
-                show(update)
-            for data in update.values():
-                messages += (data or {}).get("messages", [])
+                print(f"Run {run_id}\nTask: {task}\nTools: {', '.join(t.name for t in tools)}")
+            async for update in graph.astream(state, {"recursion_limit": 80}, stream_mode="updates"):
+                if not quiet:
+                    show(update)
+                for data in update.values():
+                    messages += (data or {}).get("messages", [])
+    except Exception as e:  # a failed run is still recorded, then reported
+        error = _root_cause(e)
 
     summary = {"run_id": run_id, "centre": centre, "since": since, "until": until,
                "model": os.getenv("LLM_MODEL"), "base_url": os.getenv("LLM_BASE_URL"),
-               "seconds": round(time.perf_counter() - t0, 1), **usage_totals(messages)}
-    write_entry({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "run_id": run_id,
+               "seconds": round(time.perf_counter() - t0, 1), **usage_totals(messages),
+               "completed": error is None, "error": error}
+    log_client({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "run_id": run_id,
                  "server": "agent", "tool": "run_summary", "output": summary})
     if not quiet:
+        if error:
+            print(f"\nRUN FAILED: {error}")
         print(f"\nRun summary: {json.dumps(summary)}")
     return {"summary": summary, "messages": messages}
+
+
+def _root_cause(e: BaseException) -> str:
+    """Unwrap the nested ExceptionGroups that anyio/MCP produce down to the real error."""
+    while isinstance(e, BaseExceptionGroup) and e.exceptions:
+        e = e.exceptions[0]
+    return f"{type(e).__name__}: {str(e)[:500]}"
 
 
 def main() -> None:
