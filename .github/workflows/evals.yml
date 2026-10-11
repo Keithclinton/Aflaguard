@@ -1,0 +1,78 @@
+# Runs the eval tasks on GitHub's runners, so nobody's laptop has to stay on.
+# Free model tiers have a daily token quota, so each job runs until it has used what is available
+# (waiting for the quota to refill), commits the results, and the next job resumes.
+# Stops for good at CUTOFF, before the submission deadline, so no commit can land after it.
+
+name: evals
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # every 6 hours
+  workflow_dispatch: {}      # or start it by hand from the Actions tab
+
+permissions:
+  contents: write            # to commit the results
+
+concurrency:
+  group: evals
+  cancel-in-progress: false  # never two jobs at once; a new one waits for the running one
+
+env:
+  CUTOFF: "2026-10-14T21:00:00Z"   # 15 Oct 2026 00:00 East Africa Time
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Stop if past the cutoff
+        id: gate
+        run: |
+          if [ "$(date -u +%s)" -ge "$(date -u -d "$CUTOFF" +%s)" ]; then
+            echo "Past cutoff ($CUTOFF): not running."; echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.go == 'true'
+
+      - uses: astral-sh/setup-uv@v6
+        if: steps.gate.outputs.go == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.go == 'true'
+        with:
+          node-version: "20"
+
+      - name: Install
+        if: steps.gate.outputs.go == 'true'
+        run: uv sync
+
+      - name: Run evals (resumes; waits for the daily model quota)
+        if: steps.gate.outputs.go == 'true'
+        timeout-minutes: 320     # leaves time to commit whatever finished
+        continue-on-error: true
+        env:
+          LLM_BASE_URL: https://api.groq.com/openai/v1
+          LLM_MODEL: qwen/qwen3.8-27b
+          LLM_EXTRA_BODY: '{"reasoning_effort": "none"}'
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          AFLAGUARD_WAIT_FOR_QUOTA: "1"
+          PYTHONUNBUFFERED: "1"
+        run: uv run evals/run_evals.py
+
+      - name: Commit results
+        if: always() && steps.gate.outputs.go == 'true'
+        run: |
+          if [ "$(date -u +%s)" -ge "$(date -u -d "$CUTOFF" +%s)" ]; then
+            echo "Past cutoff: not committing."; exit 0
+          fi
+          uv run evals/run_evals.py --summary || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add evals/results
+          if git diff --cached --quiet; then echo "No new runs."; exit 0; fi
+          git commit -m "Record eval runs"
+          git pull --rebase origin main
+          git push origin HEAD:main
