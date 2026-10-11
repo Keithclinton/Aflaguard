@@ -163,8 +163,20 @@ async def run(centre: str, since: str, until: str | None, elicitation=cli_office
     if not quiet:
         if error:
             print(f"\nRUN FAILED: {error}")
+            if hint := _hint(error):
+                print(f"HINT: {hint}")
         print(f"\nRun summary: {json.dumps(summary)}")
     return {"summary": summary, "messages": messages}
+
+
+def _hint(error: str) -> str | None:
+    """Plain advice for the limits free model tiers hit most often."""
+    if "per day" in error:
+        return "The model provider's free daily token quota is used up. Try again later, or use another key/provider."
+    if "Request too large" in error or "per minute" in error:
+        return ("A request is larger than the provider's per-minute token limit. Use a shorter date range "
+                "(--since/--until) so fewer lots are in one run.")
+    return None
 
 
 def _root_cause(e: BaseException) -> str:
