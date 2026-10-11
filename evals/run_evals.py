@@ -140,7 +140,8 @@ async def run_task(task: dict, repeat: int, model=None) -> dict:
 
     return {"task": task["id"], "repeat": repeat, "run_id": run_id, "model": summary["model"],
             "passed": all(checks.values()), "checks": checks, "completed": summary["completed"],
-            "error": summary["error"], "seconds": summary["seconds"],
+            "error": summary["error"], "seconds": round(summary["seconds"] - summary["quota_wait_s"], 1),
+            "quota_wait_s": summary["quota_wait_s"],
             "input_tokens": summary["input_tokens"], "output_tokens": summary["output_tokens"],
             "model_calls": summary["model_calls"]}
 
