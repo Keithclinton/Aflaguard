@@ -38,3 +38,11 @@ def test_gap_when_test_list_misses_lots():
 def test_gaps_on_empty_run():
     gaps = find_gaps([HumanMessage("go")])
     assert any("get_lots" in g for g in gaps)
+
+
+def test_retry_after_parsing():
+    from agent.graph import retry_after_seconds
+    assert retry_after_seconds("Please try again in 16m38.352s. Need more") == 16 * 60 + 38.352
+    assert retry_after_seconds("try again in 1h2m3s") == 3723
+    assert retry_after_seconds("try again in 502ms") is None or retry_after_seconds("try again in 502ms") < 1
+    assert retry_after_seconds("no hint here") is None

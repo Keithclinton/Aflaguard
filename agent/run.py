@@ -115,12 +115,13 @@ def show(update: dict) -> None:
 
 
 def usage_totals(messages) -> dict:
-    tot = {"input_tokens": 0, "output_tokens": 0, "model_calls": 0}
+    tot = {"input_tokens": 0, "output_tokens": 0, "model_calls": 0, "quota_wait_s": 0}
     for m in messages:
         if isinstance(m, AIMessage) and m.usage_metadata:
             tot["input_tokens"] += m.usage_metadata.get("input_tokens", 0)
             tot["output_tokens"] += m.usage_metadata.get("output_tokens", 0)
             tot["model_calls"] += 1
+            tot["quota_wait_s"] += m.response_metadata.get("quota_wait_s", 0)
     return tot
 
 
@@ -140,7 +141,7 @@ async def run(centre: str, since: str, until: str | None, elicitation=cli_office
                 session = await stack.enter_async_context(client.session(name))
                 loaded = await load_mcp_tools(session, callbacks=client.callbacks, server_name=name,
                                               tool_interceptors=[log_and_retry])
-                tools += [t for t in loaded if t.name in allowed]
+                tools += [_lean(t) for t in loaded if t.name in allowed]
             graph = build_graph(tools, model)
             state = initial_state(task)
             messages = list(state["messages"])
@@ -167,6 +168,20 @@ async def run(centre: str, since: str, until: str | None, elicitation=cli_office
                 print(f"HINT: {hint}")
         print(f"\nRun summary: {json.dumps(summary)}")
     return {"summary": summary, "messages": messages}
+
+
+def _lean(tool):
+    """Drop JSON-schema boilerplate ('title', '$schema') that is resent with every model call."""
+    def strip(node):
+        if isinstance(node, dict):
+            return {k: strip(v) for k, v in node.items()
+                    if not (k in ("title", "$schema") and isinstance(v, str))}
+        if isinstance(node, list):
+            return [strip(v) for v in node]
+        return node
+    if isinstance(tool.args_schema, dict):
+        tool.args_schema = strip(tool.args_schema)
+    return tool
 
 
 def _hint(error: str) -> str | None:

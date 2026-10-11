@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import time
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -65,6 +67,38 @@ def make_model() -> ChatOpenAI:
         max_tokens=int(os.getenv("LLM_MAX_TOKENS", "900")),  # free tiers cap output tokens per minute
         extra_body=extra or None,
     )
+
+
+MAX_QUOTA_WAIT_S = 4 * 3600
+
+
+def retry_after_seconds(message: str) -> float | None:
+    """Parse 'try again in 1h2m38.5s' / '16m38.352s' / '42.1s' from a provider's rate-limit message."""
+    m = re.search(r"try again in ((?:\d+h)?(?:\d+m(?!s))?(?:[\d.]+m?s)?)", message)
+    if not m or not m.group(1):
+        return None
+    parts = {unit: float(value) for value, unit in re.findall(r"([\d.]+)(ms|h|m|s)", m.group(1))}
+    return (parts.get("h", 0) * 3600 + parts.get("m", 0) * 60 + parts.get("s", 0)
+            + parts.get("ms", 0) / 1000)
+
+
+def invoke_waiting_for_quota(model, messages) -> AIMessage:
+    """Call the model. With AFLAGUARD_WAIT_FOR_QUOTA=1 (unattended evals), a daily-quota 429 waits for
+    the time the provider asks and retries; otherwise the error goes up so the user sees it at once.
+    Time spent waiting is recorded on the reply so run timings stay honest."""
+    waited = 0.0
+    while True:
+        try:
+            reply = model.invoke(messages)
+            reply.response_metadata["quota_wait_s"] = round(waited)
+            return reply
+        except Exception as e:
+            secs = retry_after_seconds(str(e)) if "per day" in str(e) else None
+            if os.getenv("AFLAGUARD_WAIT_FOR_QUOTA") != "1" or secs is None or waited + secs > MAX_QUOTA_WAIT_S:
+                raise
+            print(f"   (daily model quota: waiting {secs / 60:.0f} min)", flush=True)
+            time.sleep(secs + 5)
+            waited += secs + 5
 
 
 # ---------- reading tool results back out of the conversation ----------
@@ -188,11 +222,11 @@ def build_graph(tools: list, model: ChatOpenAI | None = None):
     def plan(state: AgentState) -> dict:
         ask = HumanMessage("Before calling any tools, write your plan for this task: at most 6 short numbered "
                            "lines, no tool calls yet.")
-        reply = model.invoke([*state["messages"], ask])
+        reply = invoke_waiting_for_quota(model, [*state["messages"], ask])
         return {"messages": [ask, AIMessage(content=reply.content, usage_metadata=reply.usage_metadata)]}
 
     def call_model(state: AgentState) -> dict:
-        return {"messages": [model_with_tools.invoke(for_model(state["messages"]))]}
+        return {"messages": [invoke_waiting_for_quota(model_with_tools, for_model(state["messages"]))]}
 
     def self_check(state: AgentState) -> dict:
         gaps = find_gaps(state["messages"])
