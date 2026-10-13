@@ -7,7 +7,7 @@ __pycache__/
 # Secrets
 .env
 
-# Run logs (a sample run is committed under logs/sample/)
+# Run logs (a sample real run is committed under logs/sample/)
 logs/*.jsonl
 
 # Editor / OS
