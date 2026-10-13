@@ -15,16 +15,19 @@ Runs free: get a free API key at [console.groq.com](https://console.groq.com/key
 
 ```bash
 cp .env.example .env        # then paste your Groq key into LLM_API_KEY in .env
-uv run agent/run.py --centre AC-MAK-01 --since 2026-02-16 --until 2026-02-22
+uv run agent/run.py --centre AC-MAK-01 --since 2026-02-23 --until 2026-02-23
 ```
 
-Centres: `AC-MAK-01` (Makueni), `AC-KIT-01` (Kitui), `AC-MKS-01` (Machakos). The agent stops at each
-draft and asks you, as the officer, to approve or reject it by name.
+That day has one high-risk lot: you will see the evidence gathered, a ranked test list and an SMS draft,
+and be asked to approve or reject each as the officer. Other days that ran cleanly in the evals:
+`--since 2026-02-21 --until 2026-02-21` (a duplicated lot), `--centre AC-KIT-01 --since 2026-02-17
+--until 2026-02-17` (a mistyped moisture reading). Centres: `AC-MAK-01` (Makueni), `AC-KIT-01` (Kitui),
+`AC-MKS-01` (Machakos).
 
-**Free-tier limits.** Groq's free tier allows about 7,000 input tokens per minute and 200,000 tokens per
-day per model, so a run takes a few minutes (most of it waiting on the per-minute limit) and about three
-full runs fit in a day. Keep the date range to about a week (≤ 8 lots); a wider range can exceed the
-per-minute limit, and the agent will say so.
+**Free-tier limits.** Groq's free tier allows about 7,000 input tokens per minute and 200,000
+tokens per day per model. A run takes a few minutes, mostly waiting on the per-minute limit. Keep the range
+to 1–3 days: a wider range with several high-risk lots can exceed the per-request limit (see E3 in
+[EVALS.md](EVALS.md)), and the agent will say so.
 
 **Model:** any open-weights model behind an OpenAI-compatible endpoint, chosen in `.env` only:
 
@@ -46,7 +49,22 @@ Tests (no API key needed): `uv run pytest`
   and sandboxed to `data/intake/`, so the agent can read the centres' raw intake sheets. Borrowed because
   it is maintained and already enforces path sandboxing; writing our own file reader would add risk, not value.
 - `agent/` — LangGraph agent: plan → model/tool loop → deterministic self-check → report.
-- `logs/` — every tool call as JSONL, with the approving officer on gated actions.
+- `logs/` — every tool call as JSONL, with the approving officer on gated actions. A sample from a real
+  run (officer rejects the advisory, so nothing is sent) is in `logs/sample/`.
+- `evals/` — 8 tasks run on the real model and checked by code; results in [EVALS.md](EVALS.md).
+
+## Cost per run
+
+Measured over the eval runs on `qwen/qwen3.8-27b`: on average **25.6k input + 1.4k output tokens**, 4–10
+model calls per run (1–3 lots). A full week at one centre (8 lots) took about 55k tokens in development.
+
+| Where | Cost per eval-size run |
+|---|---|
+| Groq free tier (what we used) | **$0** |
+| Groq paid, listed $0.80 / $4.00 per million tokens in / out | ≈ $0.026 |
+| OpenRouter, listed $0.04 / $2.30 per million tokens | ≈ $0.004 |
+
+Prices are list prices seen in October 2026 and may change.
 
 ## Data: what is real and what is not
 
@@ -64,7 +82,17 @@ Tests (no API key needed): `uv run pytest`
 
 ## Not finished / known limits
 
-_To be completed with the eval results — see [EVALS.md](EVALS.md)._
+- **The agent misses intake notes that contradict a household's recorded practice** (eval E6): it is not
+  shown practices that add no risk points. Unfixed; next step in [EVALS.md](EVALS.md).
+- **Free-tier size limit** (eval E3): a run with several high-risk lots can exceed Groq's free per-request
+  limit before the final report. In that run the model had also dropped the end date and widened the window.
+- **Not every eval task has 3 runs** — the free daily quota limited how many we could run before the
+  deadline; [EVALS.md](EVALS.md) shows exactly what ran.
+- Approval is a command-line prompt only. SMS sending is mocked. Advisories are drafted in English only.
+- All farm data is synthetic. Scoring weights are our judgement and have not been checked against
+  measured aflatoxin. County rainfall boxes approximate the counties.
+- The Filesystem server is pinned to `2026.8.31`, which prints a deprecation notice on start (its
+  publisher moved to version 1.0.0 on 11 Oct 2026).
 
 ## Licence
 
