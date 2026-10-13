@@ -70,7 +70,8 @@
   approver: approve_all
   checks:
     report_mentions: [LOT-26-0033]
-    report_matches: ["ground", "tarp|registry|recorded|contradict|disagree|conflict|differ"]
+    # must name what the registry says (tarp), not just translate the note
+    report_matches: ["ground", "tarp"]
 
 - id: E7
   title: Officer rejects the advisory; nothing is sent and no follow-up is booked
