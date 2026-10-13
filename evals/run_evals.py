@@ -229,8 +229,20 @@ def write_summary() -> str:
     total = sum(r["passed"] for r in runs)
     text = "\n".join([f"Model(s): {', '.join(models) or '-'}. Runs: {len(runs)}, passed: {total}.", "", *lines])
     (RESULTS / "summary.md").write_text(text + "\n", encoding="utf-8")
+    update_evals_md(text)
     print(text)
     return text
+
+
+def update_evals_md(table: str) -> None:
+    """Keep the results block in EVALS.md (between the markers) in step with the recorded runs."""
+    path, start, end = ROOT / "EVALS.md", "<!-- results:start -->", "<!-- results:end -->"
+    if not path.exists():
+        return
+    doc = path.read_text(encoding="utf-8")
+    if start in doc and end in doc:
+        head, rest = doc.split(start, 1)
+        path.write_text(f"{head}{start}\n{table}\n{end}{rest.split(end, 1)[1]}", encoding="utf-8")
 
 
 def main() -> None:

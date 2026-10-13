@@ -73,7 +73,7 @@ jobs:
           uv run evals/run_evals.py --summary || true
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add evals/results
+          git add evals/results EVALS.md
           if git diff --cached --quiet; then echo "No new runs."; exit 0; fi
           git commit -m "Record eval runs"
           git pull --rebase origin main
