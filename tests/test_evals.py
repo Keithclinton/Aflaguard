@@ -1,10 +1,9 @@
 """The eval harness itself: checks are right, and a task runs end to end (scripted model, no quota)."""
 
 import asyncio
-import json
 
 import yaml
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage
 from test_agent_plumbing import ScriptedModel, call
 
 from evals import run_evals as E
@@ -15,17 +14,13 @@ def test_final_report_normalises_hyphens():
     assert E.final_report(msgs) == "Lot LOT-26-0041 is high."
 
 
-def _scored(lot, level):
-    return [AIMessage("", tool_calls=[call("score_aflatoxin_risk", 9, lot_id=lot)]),
-            ToolMessage(json.dumps({"lot_id": lot, "risk_level": level}), tool_call_id="c9_score_aflatoxin_risk")]
-
-
 def test_changed_score_is_caught():
-    msgs = _scored("LOT-26-0011", "low")
-    assert E.scores_reported_faithfully(msgs, "| LOT-26-0011 | HH-009 | low |")
-    assert not E.scores_reported_faithfully(msgs, "LOT-26-0011 is high risk")
-    # a level belonging to the next lot on the line is not attributed to this one
-    assert E.scores_reported_faithfully(msgs, "LOT-26-0011 duplicates LOT-26-0041 (medium)")
+    levels = {"LOT-26-0011": "low"}
+    assert E.scores_reported_faithfully(levels, "| LOT-26-0011 | HH-009 | low |")
+    assert not E.scores_reported_faithfully(levels, "LOT-26-0011 is high risk")
+    # a level belonging to the next lot, or to the next sentence, is not attributed to this one
+    assert E.scores_reported_faithfully(levels, "LOT-26-0011 duplicates LOT-26-0041 (medium)")
+    assert E.scores_reported_faithfully(levels, "reason: late_drying [lots:LOT-26-0011]. No high-risk lots")
 
 
 def test_task_runs_and_is_checked(tmp_path, monkeypatch):

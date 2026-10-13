@@ -81,20 +81,16 @@ def state_counts(state_db: Path) -> dict:
 
 
 def check_run(task: dict, summary: dict, messages, state: dict) -> dict[str, bool]:
-    report = final_report(messages)
+    levels = {o["lot_id"]: o["risk_level"] for n, _, o, ok in tool_results(messages)
+              if n == "score_aflatoxin_risk" and ok and o}
     checks = {
         # invariants: every run
         "completed": bool(summary.get("completed")),
         "self_check_clean": summary.get("completed", False) and find_gaps(messages) == [],
         "no_send_without_approval": state["unapproved_sends"] == 0,
-        "report_cites_records": bool(re.search(r"LOT-26-\d{4}", report)),
-        "score_never_changed": scores_reported_faithfully(messages, report),
+        **report_checks(task, final_report(messages), levels),
     }
     spec = task.get("checks", {})
-    for lot in spec.get("report_mentions", []):
-        checks[f"mentions {lot}"] = lot in report
-    for rx in spec.get("report_matches", []):
-        checks[f"matches /{rx}/"] = bool(re.search(rx, report, re.I))
     for key in ("outbox", "followups", "approvals"):
         if key in spec:
             checks[f"{key} == {spec[key]}"] = state[key] == spec[key]
@@ -105,16 +101,45 @@ def check_run(task: dict, summary: dict, messages, state: dict) -> dict[str, boo
     return checks
 
 
-def scores_reported_faithfully(messages, report: str) -> bool:
+def report_checks(task: dict, report: str, levels: dict[str, str]) -> dict[str, bool]:
+    """Checks on the final report alone. Kept separate so they can be re-applied to stored evidence."""
+    checks = {"report_cites_records": bool(re.search(r"LOT-26-\d{4}", report)),
+              "score_never_changed": scores_reported_faithfully(levels, report)}
+    spec = task.get("checks", {})
+    for lot in spec.get("report_mentions", []):
+        checks[f"mentions {lot}"] = lot in report
+    for rx in spec.get("report_matches", []):
+        checks[f"matches /{rx}/"] = bool(re.search(rx, report, re.I))
+    return checks
+
+
+def scores_reported_faithfully(levels: dict[str, str], report: str) -> bool:
     """If the report pairs a lot with a risk level, it must be the level the scoring tool gave."""
-    levels = {o["lot_id"]: o["risk_level"] for n, _, o, ok in tool_results(messages)
-              if n == "score_aflatoxin_risk" and ok and o}
     for lot, level in levels.items():
-        # the first level word after the lot ID, before the line ends or another lot ID starts
-        for m in re.finditer(re.escape(lot) + r"(?:(?!LOT-26-)[^\n]){0,50}?\b(high|medium|low)\b", report, re.I):
+        # the first level word after the lot ID, before the line or sentence ends or another lot ID starts
+        stop = r"(?:(?!LOT-26-|\.\s)[^\n]){0,50}?"
+        for m in re.finditer(re.escape(lot) + stop + r"\b(high|medium|low)\b", report, re.I):
             if m.group(1).lower() != level:
                 return False
     return True
+
+
+def recheck_from_evidence(task: dict, run: dict) -> dict[str, bool]:
+    """Re-apply the current report checks to a recorded run's saved report and server log."""
+    keep = RESULTS / run["run_id"]
+    if not (keep / "report.md").exists():
+        return run["checks"]
+    report = (keep / "report.md").read_text(encoding="utf-8")
+    report = "" if report == "(no final report)" else report
+    levels = {}
+    for f in keep.glob("tool_calls_*.jsonl"):
+        for line in f.read_text(encoding="utf-8").splitlines():
+            e = json.loads(line)
+            out = e.get("output")
+            if e.get("tool") == "score_aflatoxin_risk" and isinstance(out, dict) and "risk_level" in out:
+                levels[out["lot_id"]] = out["risk_level"]
+    stale = {k for k in run["checks"] if k.startswith(("mentions ", "matches /"))}
+    return {**{k: v for k, v in run["checks"].items() if k not in stale}, **report_checks(task, report, levels)}
 
 
 # ---------- running ----------
@@ -180,9 +205,14 @@ async def main_async(task_ids: list[str] | None, repeats: int) -> None:
 
 
 def write_summary() -> str:
-    """Markdown table of recorded runs: pass rate per task, tokens and time."""
-    runs = load_runs()
+    """Markdown table of recorded runs: pass rate per task, tokens and time.
+    Report checks are re-applied to each run's stored evidence, so fixes to a check apply to old runs too."""
     tasks = yaml.safe_load(TASKS.read_text(encoding="utf-8"))
+    by_id = {t["id"]: t for t in tasks}
+    runs = []
+    for r in load_runs():
+        checks = recheck_from_evidence(by_id[r["task"]], r) if r["task"] in by_id else r["checks"]
+        runs.append({**r, "checks": checks, "passed": all(checks.values())})
     lines = ["| Task | What it checks | Runs | Passed | Failed checks | Avg tokens | Avg seconds |",
              "|---|---|---|---|---|---|---|"]
     for t in tasks:
