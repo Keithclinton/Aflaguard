@@ -39,6 +39,8 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
         if: steps.gate.outputs.go == 'true'
+        with:
+          enable-cache: false    # the cache-saving cleanup step failed and marked jobs red
 
       - uses: actions/setup-node@v4
         if: steps.gate.outputs.go == 'true'
