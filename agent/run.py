@@ -154,7 +154,17 @@ async def run(centre: str, since: str, until: str | None, elicitation=cli_office
                     messages += (data or {}).get("messages", [])
     except Exception as e:  # a failed run is still recorded, then reported
         error = _root_cause(e)
+    except (KeyboardInterrupt, asyncio.CancelledError) as e:  # Ctrl+C: record it as stopped, then stop
+        error = f"interrupted by user ({type(e).__name__})"
+        _write_summary(run_id, centre, since, until, t0, messages, error, quiet)
+        raise
+    return _write_summary(run_id, centre, since, until, t0, messages, error, quiet)
 
+
+def _write_summary(run_id, centre, since, until, t0, messages, error, quiet) -> dict:
+    # a finished run ends on the model's report; one that ends on unanswered tool calls was cut short
+    if error is None and messages and isinstance(messages[-1], AIMessage) and messages[-1].tool_calls:
+        error = "run stopped before its tool calls finished (interrupted?)"
     summary = {"run_id": run_id, "centre": centre, "since": since, "until": until,
                "model": os.getenv("LLM_MODEL"), "base_url": os.getenv("LLM_BASE_URL"),
                "seconds": round(time.perf_counter() - t0, 1), **usage_totals(messages),
